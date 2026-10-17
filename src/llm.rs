@@ -17,6 +17,7 @@ pub struct LlmJob {
 pub struct LlmCfg {
     pub url: String,
     pub model: String,
+    pub threads: u32,
 }
 
 const LLM_PROMPT: &str = "You extract dinosaur trivia from an article. Pick 5 to 8 surprising, self-contained facts. \
@@ -86,9 +87,9 @@ async fn llm_facts(http: &reqwest::Client, cfg: &LlmCfg, job: &LlmJob) -> Result
             "properties": {"facts": {"type": "array", "items": {"type": "string"}}},
             "required": ["facts"]
         },
-        // num_thread matches the sidecar's 3-CPU quota (extra threads get throttled to a crawl);
+        // num_thread must match the sidecar's CPU quota (extra threads get throttled to a crawl);
         // num_predict stops a runaway generation from holding the single worker.
-        "options": {"temperature": 0.2, "num_ctx": 4096, "num_thread": 3, "num_predict": 500},
+        "options": {"temperature": 0.2, "num_ctx": 4096, "num_thread": cfg.threads, "num_predict": 500},
         "messages": [
             {"role": "system", "content": LLM_PROMPT},
             {"role": "user", "content": format!("Dinosaur: {}\n\nArticle:\n{}", job.title, article_for_llm(&job.extract))},

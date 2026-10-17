@@ -9,6 +9,8 @@ services:
       # Remove OLLAMA_URL to run heuristic-only (no LLM sidecar needed).
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:3b-instruct
+      # Keep equal to the ollama CPU limit below; more threads than quota get throttled to a crawl.
+      - OLLAMA_NUM_THREAD=2
     depends_on:
       - ollama
     ports:
@@ -44,8 +46,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 6G
-          cpus: "3.0"
+          memory: 4G
+          cpus: "2.0"
 
 volumes:
   ollama:

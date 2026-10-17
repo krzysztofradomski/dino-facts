@@ -47,6 +47,7 @@ Without Docker: `cargo run --release` (listens on `0.0.0.0:8080`).
 | `WIKI_USER_AGENT` | `dino-trivia/1.0 (https://dinofacts.fyi; hello@radomski.dev) reqwest/0.12` | Sent to Wikipedia; Wikimedia expects a real contact |
 | `OLLAMA_URL` | unset | Enables LLM fact extraction, e.g. `http://ollama:11434` |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct` | Model the worker asks for |
+| `OLLAMA_NUM_THREAD` | `2` | Inference threads; keep equal to the sidecar's CPU limit (sized for a 2 vCPU / 8 GB host) |
 
 ## How it works
 

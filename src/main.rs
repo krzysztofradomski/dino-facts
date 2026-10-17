@@ -84,7 +84,8 @@ async fn main() {
 
     if let (Some(rx), Some(url)) = (llm_rx, llm_url) {
         let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen2.5:3b-instruct".into());
-        tokio::spawn(llm_worker(rx, state.clone(), LlmCfg { url, model }));
+        let threads = std::env::var("OLLAMA_NUM_THREAD").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        tokio::spawn(llm_worker(rx, state.clone(), LlmCfg { url, model, threads }));
     }
 
     // Background Harvester Task
