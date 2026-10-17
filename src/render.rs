@@ -156,4 +156,83 @@ mod tests {
     fn esc_neutralises_markup() {
         assert_eq!(esc("<b>\"x\" & 'y'</b>"), "&lt;b&gt;&quot;x&quot; &amp; &#x27;y&#x27;&lt;/b&gt;");
     }
+
+    use axum::{body::to_bytes, http::HeaderValue};
+
+    fn fact(text: &str) -> TriviaFact {
+        TriviaFact {
+            dino: "Tyrannosaurus".into(),
+            category: "Description".into(),
+            fact: text.into(),
+            wiki_url: "https://en.wikipedia.org/wiki/Tyrannosaurus".into(),
+        }
+    }
+
+    fn params(format: Option<&str>, q: bool) -> Params {
+        Params { format: format.map(String::from), q: q.then(String::new) }
+    }
+
+    async fn render(ua: &str, p: Params, f: &TriviaFact) -> (axum::http::response::Parts, String) {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::USER_AGENT, HeaderValue::from_str(ua).unwrap());
+        let (parts, body) = render_fact(f, &headers, &p).into_parts();
+        let bytes = to_bytes(body, usize::MAX).await.unwrap();
+        (parts, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn json_format_returns_the_fact_as_json() {
+        let (parts, body) = render("curl/8", params(Some("json"), false), &fact("Big teeth.")).await;
+        assert_eq!(parts.headers[header::CONTENT_TYPE], "application/json");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!((v["dino"].as_str(), v["fact"].as_str()), (Some("Tyrannosaurus"), Some("Big teeth.")));
+    }
+
+    #[tokio::test]
+    async fn q_returns_a_single_plain_line() {
+        let (parts, body) = render("Mozilla/5.0", params(None, true), &fact("Big teeth.")).await;
+        assert_eq!(parts.headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+        assert_eq!(body, "🦖 [Tyrannosaurus] Big teeth.\n");
+    }
+
+    #[tokio::test]
+    async fn cli_user_agents_get_the_ansi_card() {
+        for ua in ["curl/8.4", "Wget/1.21", "HTTPie/3.2", "node-fetch"] {
+            let (_, body) = render(ua, params(None, false), &fact("Big teeth.")).await;
+            assert!(body.contains("\x1b[") && body.contains("DINO TRIVIA: TYRANNOSAURUS"), "{ua}");
+        }
+    }
+
+    #[tokio::test]
+    async fn format_text_forces_the_ansi_card_for_browsers() {
+        let (_, body) = render("Mozilla/5.0", params(Some("text"), false), &fact("Big teeth.")).await;
+        assert!(body.contains("\x1b["));
+    }
+
+    #[tokio::test]
+    async fn browsers_get_html_with_csp_and_escaped_content() {
+        let evil = fact("<script>alert(1)</script> & more");
+        let (parts, body) = render("Mozilla/5.0", params(None, false), &evil).await;
+        assert!(parts.headers[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/html"));
+        assert!(parts.headers.contains_key(header::CONTENT_SECURITY_POLICY));
+        assert!(!body.contains("<script>"));
+        assert!(body.contains("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more"));
+    }
+
+    #[test]
+    fn wrap_lines_respects_width() {
+        let text = "one two three four five six seven eight nine ten";
+        let lines = wrap_lines(text, 12);
+        assert!(lines.iter().all(|l| l.len() <= 12), "{lines:?}");
+        assert_eq!(lines.join(" "), text);
+    }
+
+    #[test]
+    fn stats_page_shows_counters_and_24_bars() {
+        let html = stats_page(7, 3, 99, &[0u64; 24]);
+        assert!(html.contains(r#"24h Trivia Served</div><div class="val">7</div>"#));
+        assert!(html.contains(r#"Facts in Reservoir</div><div class="val">99</div>"#));
+        assert!(html.contains(r#"24h Wiki API Calls</div><div class="val">3</div>"#));
+        assert_eq!(html.matches("<rect").count(), 24);
+    }
 }

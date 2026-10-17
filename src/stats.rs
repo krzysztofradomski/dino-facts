@@ -38,7 +38,10 @@ impl Stats24h {
     }
 
     fn current_slot(&self) -> &MinuteSlot {
-        let now = Self::now_min();
+        self.slot_at(Self::now_min())
+    }
+
+    fn slot_at(&self, now: u64) -> &MinuteSlot {
         let slot = &self.slots[(now % 1440) as usize];
         let prev = slot.epoch_min.load(Ordering::Relaxed);
         if prev != now
@@ -66,7 +69,10 @@ impl Stats24h {
     }
 
     pub fn snapshot(&self) -> (u64, u64, u64, Vec<u64>) {
-        let now = Self::now_min();
+        self.snapshot_at(Self::now_min())
+    }
+
+    fn snapshot_at(&self, now: u64) -> (u64, u64, u64, Vec<u64>) {
         let mut reqs = 0;
         let mut wiki = 0;
         let mut hourly = vec![0u64; 24];
@@ -88,5 +94,52 @@ impl Stats24h {
             self.total_facts_harvested.load(Ordering::Relaxed),
             hourly,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const T: u64 = 1_000_000;
+
+    fn hit(s: &Stats24h, minute: u64) {
+        s.slot_at(minute).requests.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn counts_requests_and_buckets_by_hour() {
+        let s = Stats24h::new();
+        hit(&s, T);
+        hit(&s, T);
+        hit(&s, T - 61);
+        let (reqs, wiki, _, hourly) = s.snapshot_at(T);
+        assert_eq!((reqs, wiki), (3, 0));
+        assert_eq!(hourly[23], 2);
+        assert_eq!(hourly[22], 1);
+    }
+
+    #[test]
+    fn drops_data_older_than_24h() {
+        let s = Stats24h::new();
+        hit(&s, T);
+        assert_eq!(s.snapshot_at(T + 1439).0, 1);
+        assert_eq!(s.snapshot_at(T + 1440).0, 0);
+    }
+
+    #[test]
+    fn reused_slot_is_reset() {
+        let s = Stats24h::new();
+        hit(&s, T);
+        hit(&s, T);
+        hit(&s, T + 1440);
+        assert_eq!(s.snapshot_at(T + 1440).0, 1);
+    }
+
+    #[test]
+    fn tracks_facts_in_reservoir() {
+        let s = Stats24h::new();
+        s.set_facts(42);
+        assert_eq!(s.snapshot_at(T).2, 42);
     }
 }

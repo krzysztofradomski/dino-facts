@@ -110,12 +110,7 @@ async fn main() {
             .unwrap(),
     );
 
-    let app = Router::new()
-        .route("/", get(random_trivia_handler))
-        .route("/stats", get(stats_handler))
-        .route("/{dino}", get(specific_dino_handler))
-        .layer(GovernorLayer { config: gov })
-        .with_state(state);
+    let app = router(state).layer(GovernorLayer { config: gov });
 
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
     let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
@@ -126,6 +121,14 @@ async fn main() {
     )
     .await
     .unwrap();
+}
+
+fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/", get(random_trivia_handler))
+        .route("/stats", get(stats_handler))
+        .route("/{dino}", get(specific_dino_handler))
+        .with_state(state)
 }
 
 // --- HTTP Handlers ---
@@ -283,4 +286,88 @@ async fn get_or_harvest_dino(
 async fn stats_handler(State(state): State<AppState>) -> Html<String> {
     let (reqs, wiki_calls, pool_size, hourly) = state.stats.snapshot();
     Html(render::stats_page(reqs, wiki_calls, pool_size, &hourly))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{to_bytes, Body},
+        http::Request,
+    };
+    use tower::ServiceExt;
+
+    fn state(facts: Vec<TriviaFact>) -> AppState {
+        AppState {
+            reservoir: Arc::new(RwLock::new(facts)),
+            dino_cache: Cache::builder().max_capacity(10).build(),
+            http: reqwest::Client::new(),
+            wiki_sem: Arc::new(Semaphore::new(2)),
+            stats: Arc::new(Stats24h::new()),
+            llm_tx: None,
+        }
+    }
+
+    fn fact(dino: &str, text: &str) -> TriviaFact {
+        TriviaFact {
+            dino: dino.into(),
+            category: "Description".into(),
+            fact: text.into(),
+            wiki_url: format!("https://en.wikipedia.org/wiki/{dino}"),
+        }
+    }
+
+    async fn get(state: &AppState, uri: &str) -> (StatusCode, String) {
+        let resp = router(state.clone())
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn root_serves_from_the_reservoir() {
+        let s = state(vec![fact("Tyrannosaurus", "Big teeth.")]);
+        let (status, body) = get(&s, "/?q").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "🦖 [Tyrannosaurus] Big teeth.\n");
+    }
+
+    #[tokio::test]
+    async fn empty_reservoir_is_503() {
+        let (status, _) = get(&state(vec![]), "/").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn cached_dino_is_served_without_hitting_wikipedia() {
+        let s = state(vec![]);
+        let cached = Arc::new(vec![fact("Ankylosaurus", "Armoured tail club.")]);
+        s.dino_cache.insert("Ankylosaurus".into(), cached).await;
+        let (status, body) = get(&s, "/ankylosaurus?q").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "🦖 [Ankylosaurus] Armoured tail club.\n");
+        assert_eq!(s.stats.snapshot().1, 0);
+    }
+
+    #[tokio::test]
+    async fn invalid_names_are_rejected_before_any_network_call() {
+        let s = state(vec![]);
+        let (status, body) = get(&s, "/bad$name").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body.contains("Invalid dinosaur name."), "{body}");
+        assert_eq!(s.stats.snapshot().1, 0);
+    }
+
+    #[tokio::test]
+    async fn stats_page_counts_served_requests() {
+        let s = state(vec![fact("Tyrannosaurus", "Big teeth.")]);
+        get(&s, "/").await;
+        get(&s, "/?format=json").await;
+        let (status, body) = get(&s, "/stats").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(r#"24h Trivia Served</div><div class="val">2</div>"#), "{body}");
+    }
 }

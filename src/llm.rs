@@ -178,4 +178,15 @@ mod tests {
         assert!(grounded("Tyrannosaurus had teeth 30 cm long and a bite force of 57,000 newtons.", art));
         assert!(!grounded("Tyrannosaurus could run at 70 kilometres per hour across open plains.", art));
     }
+
+    #[test]
+    fn article_for_llm_drops_dry_sections_and_caps_length() {
+        let text = format!(
+            "Intro text.\n== Description ==\nGood body.\n== References ==\nCite me.\n== Behavior ==\n{}",
+            "x".repeat(20_000)
+        );
+        let out = article_for_llm(&text);
+        assert!(out.contains("Good body.") && !out.contains("Cite me."));
+        assert_eq!(out.chars().count(), 9000);
+    }
 }

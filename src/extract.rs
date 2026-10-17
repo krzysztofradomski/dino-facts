@@ -226,4 +226,59 @@ mod tests {
         assert_eq!(facts.len(), 1, "{facts:?}");
         assert!(facts[0].starts_with("Tyrannosaurus could run"), "{facts:?}");
     }
+
+    fn texts(title: &str, text: &str) -> Vec<String> {
+        extract_trivia_nuggets(title, text).into_iter().map(|f| f.fact).collect()
+    }
+
+    #[test]
+    fn best_fact_ranks_first_regardless_of_article_order() {
+        let text = "== Description ==\n\
+            The animal lived in a wide variety of habitats across the region. \
+            Stegosaurus had a tiny brain, about the size of a lime, and a long spiked tail. \
+            Stegosaurus was the largest stegosaurid, reaching 9 metres in length and weighing about 5 tonnes.";
+        let facts = texts("Stegosaurus", text);
+        assert_eq!(facts.len(), 2, "{facts:?}");
+        assert!(facts[0].contains("largest stegosaurid"), "{facts:?}");
+    }
+
+    #[test]
+    fn keeps_at_most_max_facts() {
+        let sentences: String = (1..=20)
+            .map(|n| format!("Triceratops had a bony frill and horns stretching {n} metres across the skull of adults. "))
+            .collect();
+        let text = format!("== Description ==\n{}", sentences.trim_end());
+        assert_eq!(texts("Triceratops", &text).len(), MAX_FACTS_PER_DINO);
+    }
+
+    #[test]
+    fn repairs_leading_pronouns() {
+        let facts = texts(
+            "Tyrannosaurus",
+            "Its skull measured over 1.5 metres in length, the largest of any known theropod.",
+        );
+        assert!(facts[0].starts_with("Tyrannosaurus's skull"), "{facts:?}");
+    }
+
+    #[test]
+    fn skips_dry_sections_and_dedupes() {
+        let good = "Velociraptor had a large sickle-shaped claw on each foot, about 6.5 cm long.";
+        let text = format!("== Classification ==\n{good}\n== Description ==\n{good} {good}");
+        assert_eq!(texts("Velociraptor", &text).len(), 1);
+    }
+
+    #[test]
+    fn splitter_keeps_initials_together() {
+        assert_eq!(
+            split_sentences("It was named by J. Smith in the field. Later it grew."),
+            vec!["It was named by J. Smith in the field.", "Later it grew."]
+        );
+    }
+
+    #[test]
+    fn detects_specimen_codes() {
+        assert!(has_specimen_code(&["CM", "9401", "is", "large"]));
+        assert!(has_specimen_code(&["MOR1125", "was", "found"]));
+        assert!(!has_specimen_code(&["The", "T-rex", "walked"]));
+    }
 }
