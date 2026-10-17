@@ -2,7 +2,7 @@ use crate::{
     extract::{TriviaFact, MAX_FACTS_PER_DINO, SKIP_SECTIONS},
     AppState,
 };
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
 // --- Optional LLM trivia extraction (Ollama sidecar) ---
@@ -20,8 +20,9 @@ pub struct LlmCfg {
 }
 
 const LLM_PROMPT: &str = "You extract dinosaur trivia from an article. Pick 3 to 5 surprising, self-contained facts. \
-Rules: each fact is exactly ONE sentence of 60-200 characters; reuse the article's own wording and numbers as closely \
-as possible and add nothing that is not in the article; always name the dinosaur explicitly (never 'it' or 'they'); \
+Rules: each fact is exactly ONE sentence of 60-200 characters; copy a sentence from the article almost word for word \
+(only swap pronouns for the dinosaur's name) and never add conclusions, explanations or comparisons the article \
+does not state; always name the dinosaur explicitly (never 'it' or 'they'); \
 prefer sizes, speeds, senses, diet, behaviour, injuries, discovery stories and the meaning of the name; skip \
 classification, specimen codes, citations and scientific disputes. Reply with JSON only: {\"facts\": [\"...\"]}";
 
@@ -150,7 +151,29 @@ fn article_for_llm(extract: &str) -> String {
     out.chars().take(9000).collect()
 }
 
-// Guards against small-model invention: every number and ~all long words must appear in the article.
+// A fact must be a near-copy: at least this share of its 3-word runs appears verbatim in the article.
+const MIN_TRIGRAM_OVERLAP: f64 = 0.7;
+
+fn words(s: &str) -> Vec<String> {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+fn trigram_overlap(fact: &str, article: &str) -> f64 {
+    let (f, a) = (words(fact), words(article));
+    let seen: HashSet<&[String]> = a.windows(3).collect();
+    let total = f.windows(3).count();
+    if total == 0 {
+        return 0.0;
+    }
+    f.windows(3).filter(|w| seen.contains(w)).count() as f64 / total as f64
+}
+
+// Guards against small-model invention: every number and ~all long words must appear in the article,
+// and the sentence itself must be a near-copy (stitched-together real words still fail).
 fn grounded(fact: &str, article: &str) -> bool {
     let art = article.to_lowercase();
     let toks: Vec<String> = fact
@@ -167,7 +190,7 @@ fn grounded(fact: &str, article: &str) -> bool {
         .iter()
         .filter(|w| w.chars().any(|c| c.is_ascii_digit()))
         .all(|w| art.contains(w.as_str()));
-    numbers_ok && hits * 100 >= toks.len() * 85
+    numbers_ok && hits * 100 >= toks.len() * 85 && trigram_overlap(fact, article) >= MIN_TRIGRAM_OVERLAP
 }
 
 #[cfg(test)]
@@ -175,10 +198,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn grounding_rejects_invented_numbers() {
+    fn grounding_accepts_near_copies_and_rejects_inventions() {
         let art = "Tyrannosaurus had a bite force of up to 57,000 newtons and teeth 30 cm long.";
-        assert!(grounded("Tyrannosaurus had teeth 30 cm long and a bite force of 57,000 newtons.", art));
+        assert!(grounded("Tyrannosaurus had a bite force of up to 57,000 newtons.", art));
         assert!(!grounded("Tyrannosaurus could run at 70 kilometres per hour across open plains.", art));
+        // real words and numbers, rearranged into a claim the article never makes
+        assert!(!grounded("Teeth 30 cm long and a bite force of up to 57,000 newtons had Tyrannosaurus.", art));
     }
 
     #[test]
