@@ -596,6 +596,11 @@ mod tests {
     }
 
     #[test]
+    fn esc_neutralises_markup() {
+        assert_eq!(esc("<b>\"x\" & 'y'</b>"), "&lt;b&gt;&quot;x&quot; &amp; &#x27;y&#x27;&lt;/b&gt;");
+    }
+
+    #[test]
     fn grounding_rejects_invented_numbers() {
         let art = "Tyrannosaurus had a bite force of up to 57,000 newtons and teeth 30 cm long.";
         assert!(grounded("Tyrannosaurus had teeth 30 cm long and a bite force of 57,000 newtons.", art));
@@ -830,9 +835,22 @@ fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params) -> Respo
         • Specific dino: <code>curl -s https://dino.yourdomain.com/ankylosaurus</code><br>
         • One-liner (for .bashrc): <code>curl -s "https://dino.yourdomain.com?q"</code></small></p>
         </body></html>"#,
-        fact.dino, fact.dino, fact.category, fact.fact, fact.wiki_url, fact.dino
+        esc(&fact.dino), esc(&fact.dino), esc(&fact.category), esc(&fact.fact), esc(&fact.wiki_url), esc(&fact.dino)
     );
-    Html(html).into_response()
+    (
+        [(header::CONTENT_SECURITY_POLICY, "default-src 'none'; style-src 'unsafe-inline'")],
+        Html(html),
+    )
+        .into_response()
+}
+
+// Facts come from Wikipedia/LLM text, so escape everything interpolated into HTML.
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
 }
 
 fn wrap_lines(text: &str, width: usize) -> Vec<String> {
