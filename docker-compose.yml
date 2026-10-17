@@ -15,6 +15,13 @@ services:
       - ollama
     ports:
       - "127.0.0.1:8080:8080"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dino-facts_default
+      - traefik.http.routers.dino-trivia.rule=Host(`dinofacts.fyi`)
+      - traefik.http.routers.dino-trivia.entrypoints=websecure
+      - traefik.http.routers.dino-trivia.tls.certresolver=letsencrypt
+      - traefik.http.services.dino-trivia.loadbalancer.server.port=8080
     deploy:
       resources:
         limits:
