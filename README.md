@@ -51,8 +51,8 @@ Without Docker: `cargo run --release` (listens on `0.0.0.0:8080`).
 
 ## How it works
 
-- **Reservoir.** `GET /` reads a random fact from an in-memory pool, so requests never wait on the network.
-- **Harvester.** A background task walks a seed list of genera, fetches each article through the MediaWiki API, and fills the pool and a per-dinosaur cache. `GET /{dino}` harvests on demand for names outside the list; concurrent misses for one name share a single fetch.
+- **Reservoir.** `GET /` reads a random fact from an in-memory pool (capped at 5,000 facts), so requests never wait on the network. Re-harvesting a dinosaur replaces its facts, and when the pool is full random old facts are evicted so it keeps rotating.
+- **Harvester.** A background task reads the ~1,400 genera in Wikipedia's "Dinosaur genera" category, harvests a built-in set of well-known ones first and the rest in random order (one new article per 45 s, so the full list takes about 17 hours), and fills the pool and a per-dinosaur cache. Cache entries expire after 7 days and are refetched on the next pass. `GET /{dino}` harvests on demand; concurrent misses for one name share a single fetch.
 - **Wikipedia etiquette.** Custom User-Agent, at most 2 concurrent requests and a 350 ms pause between calls.
 - **Ranking** (`src/extract.rs`). Sentences are scored on trivia vocabulary, measurements, superlatives and whether they name the dinosaur. Scholarly hedging, specimen codes, citations and context-dependent openers are rejected, and the best 8 per dinosaur are kept.
 - **LLM upgrade** (`src/llm.rs`, optional). After the heuristic facts are cached, one worker asks the model for 3-5 facts per article and swaps them in. A fact is kept only if every number and about 85% of its longer words appear in the source article, so invented trivia is dropped. If the sidecar is down or returns too little, the heuristic facts stay.
@@ -74,8 +74,10 @@ Tests run in memory with no network access: the extractor, grounding check, stat
 ```text
 src/main.rs     wiring, handlers, Wikipedia harvesting
 src/extract.rs  sentence splitting, scoring and ranking
+src/genera.rs   genus discovery from Wikipedia's category
 src/llm.rs      Ollama worker and grounding check
 src/render.rs   ANSI, HTML, JSON and stats rendering
+src/reservoir.rs bounded, rotating pool behind GET /
 src/stats.rs    24h rolling telemetry
 ```
 

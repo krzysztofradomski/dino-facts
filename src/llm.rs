@@ -11,7 +11,6 @@ pub struct LlmJob {
     pub key: String,
     pub title: String,
     pub extract: String,
-    pub old: Vec<TriviaFact>,
 }
 
 pub struct LlmCfg {
@@ -61,16 +60,10 @@ pub async fn llm_worker(mut rx: mpsc::Receiver<LlmJob>, state: AppState, cfg: Ll
 
         match result {
             Ok(facts) if facts.len() >= 2 => {
-                println!("🧠 {}: {} LLM facts replace {} heuristic", job.title, facts.len(), job.old.len());
+                println!("🧠 {}: {} LLM facts replace the heuristic ones", job.title, facts.len());
                 state.dino_cache.insert(job.key.clone(), Arc::new(facts.clone())).await;
-                let mut pool = state.reservoir.write().unwrap();
-                pool.retain(|f| !job.old.iter().any(|o| o.fact == f.fact));
-                for f in facts {
-                    if pool.len() < 5_000 {
-                        pool.push(f);
-                    }
-                }
-                state.stats.set_facts(pool.len() as u64);
+                let pool_len = state.reservoir.replace_dino(&job.title, &facts);
+                state.stats.set_facts(pool_len as u64);
             }
             Ok(_) => eprintln!("🧠 {}: too few grounded LLM facts, keeping heuristic ones", job.title),
             Err(e) => eprintln!("🧠 {}: LLM failed ({e}), keeping heuristic facts", job.title),

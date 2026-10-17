@@ -1,6 +1,8 @@
 mod extract;
+mod genera;
 mod llm;
 mod render;
+mod reservoir;
 mod stats;
 
 use axum::{
@@ -15,11 +17,9 @@ use llm::{llm_worker, LlmCfg, LlmJob};
 use moka::future::Cache;
 use rand::seq::SliceRandom;
 use render::{render_fact, Params};
+use reservoir::{Reservoir, RESERVOIR_CAP};
 use stats::Stats24h;
-use std::{
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, Semaphore};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 
@@ -35,7 +35,7 @@ const DINO_POOL: &[&str] = &[
 
 #[derive(Clone)]
 pub struct AppState {
-    pub reservoir: Arc<RwLock<Vec<TriviaFact>>>,
+    pub reservoir: Arc<Reservoir>,
     pub dino_cache: Cache<String, Arc<Vec<TriviaFact>>>,
     pub http: reqwest::Client,
     pub wiki_sem: Arc<Semaphore>,
@@ -66,12 +66,15 @@ async fn main() {
     };
 
     let state = AppState {
-        reservoir: Arc::new(RwLock::new(vec![TriviaFact {
-            dino: "Tyrannosaurus".into(),
-            category: "Paleobiology".into(),
-            fact: "Tyrannosaurus had the highest bite force of any terrestrial animal, capable of crushing solid bone with up to 35,000 to 57,000 newtons of force.".into(),
-            wiki_url: "https://en.wikipedia.org/wiki/Tyrannosaurus".into(),
-        }])),
+        reservoir: Arc::new(Reservoir::new(
+            vec![TriviaFact {
+                dino: "Tyrannosaurus".into(),
+                category: "Paleobiology".into(),
+                fact: "Tyrannosaurus had the highest bite force of any terrestrial animal, capable of crushing solid bone with up to 35,000 to 57,000 newtons of force.".into(),
+                wiki_url: "https://en.wikipedia.org/wiki/Tyrannosaurus".into(),
+            }],
+            RESERVOIR_CAP,
+        )),
         dino_cache: Cache::builder()
             .max_capacity(2_000)
             .time_to_live(Duration::from_secs(86400 * 7))
@@ -88,17 +91,37 @@ async fn main() {
         tokio::spawn(llm_worker(rx, state.clone(), LlmCfg { url, model, threads }));
     }
 
-    // Background Harvester Task
+    // Background harvester: the built-in seeds first, then every genus Wikipedia lists, in random order.
+    // Only real fetches are paced; already-cached names are skipped instantly.
     let bg_state = state.clone();
     tokio::spawn(async move {
-        for (idx, &dino) in DINO_POOL.iter().cycle().enumerate() {
-            let _ = get_or_harvest_dino(dino, &bg_state).await;
-            let pause = if idx < 5 {
-                Duration::from_secs(2)
-            } else {
-                Duration::from_secs(45)
+        let mut fetched = 0usize;
+        loop {
+            let mut discovered = match genera::fetch(&bg_state).await {
+                Ok(list) => {
+                    println!("🦕 discovered {} dinosaur genera on Wikipedia", list.len());
+                    list
+                }
+                Err(e) => {
+                    eprintln!("🦕 genus discovery failed ({e}); falling back to the built-in seed list");
+                    Vec::new()
+                }
             };
-            tokio::time::sleep(pause).await;
+            discovered.retain(|n| canonical_name(n).is_ok() && !DINO_POOL.contains(&n.as_str()));
+            discovered.shuffle(&mut rand::thread_rng());
+            let order: Vec<String> = DINO_POOL.iter().map(|s| s.to_string()).chain(discovered).collect();
+
+            for name in order {
+                let Ok(key) = canonical_name(&name) else { continue };
+                let cached = bg_state.dino_cache.contains_key(&key);
+                let _ = get_or_harvest_dino(&name, &bg_state).await;
+                if !cached {
+                    fetched += 1;
+                    tokio::time::sleep(Duration::from_secs(if fetched <= 5 { 2 } else { 45 })).await;
+                }
+            }
+            // Pass complete: wait before re-reading the list so a fully cached pass can't spin.
+            tokio::time::sleep(Duration::from_secs(3600)).await;
         }
     });
 
@@ -141,12 +164,7 @@ async fn random_trivia_handler(
     State(state): State<AppState>,
 ) -> Response {
     state.stats.rec_req();
-    let card = {
-        let pool = state.reservoir.read().unwrap();
-        pool.choose(&mut rand::thread_rng()).cloned()
-    };
-
-    match card {
+    match state.reservoir.random() {
         Some(fact) => render_fact(&fact, &headers, &params),
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -181,19 +199,21 @@ async fn specific_dino_handler(
 
 // --- Wikipedia Extraction & Trivia Heuristics ---
 
+// Validates a visitor- or harvester-supplied name and returns Wikipedia's casing ("tyrannosaurus" -> "Tyrannosaurus").
+fn canonical_name(raw: &str) -> Result<String, String> {
+    let clean = raw.trim().replace(' ', "_").to_lowercase();
+    if clean.is_empty() || clean.len() > 60 || !clean.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err("Invalid dinosaur name.".into());
+    }
+    let mut chars = clean.chars();
+    Ok(chars.next().unwrap().to_uppercase().collect::<String>() + chars.as_str())
+}
+
 async fn get_or_harvest_dino(
     raw_name: &str,
     state: &AppState,
 ) -> Result<Arc<Vec<TriviaFact>>, String> {
-    let clean = raw_name.trim().replace(' ', "_").to_lowercase();
-    if clean.is_empty()
-        || clean.len() > 60
-        || !clean.chars().all(|c| c.is_alphanumeric() || c == '_')
-    {
-        return Err("Invalid dinosaur name.".into());
-    }
-    let mut chars = clean.chars();
-    let canonical = chars.next().unwrap().to_uppercase().collect::<String>() + chars.as_str();
+    let canonical = canonical_name(raw_name)?;
 
     state
         .dino_cache
@@ -256,18 +276,10 @@ async fn get_or_harvest_dino(
                 return Err("Could not extract trivia sentences.".into());
             }
 
-            // Append newly discovered facts into the global reservoir (bounded at 5,000 facts)
-            {
-                let mut pool = state.reservoir.write().unwrap();
-                if pool.len() < 5_000 {
-                    for f in &facts {
-                        if !pool.iter().any(|existing| existing.fact == f.fact) {
-                            pool.push(f.clone());
-                        }
-                    }
-                    state.stats.set_facts(pool.len() as u64);
-                }
-            }
+            // Replace this dinosaur's facts in the global pool (random others are evicted when full).
+            println!("🦕 {}: {} facts harvested", title, facts.len());
+            let pool_len = state.reservoir.replace_dino(&title, &facts);
+            state.stats.set_facts(pool_len as u64);
 
             // Heuristic facts serve immediately; the LLM worker upgrades them in the background.
             if let Some(tx) = &state.llm_tx {
@@ -275,7 +287,6 @@ async fn get_or_harvest_dino(
                     key: canonical.clone(),
                     title: title.clone(),
                     extract: extract.to_string(),
-                    old: facts.clone(),
                 });
             }
 
@@ -301,7 +312,7 @@ mod tests {
 
     fn state(facts: Vec<TriviaFact>) -> AppState {
         AppState {
-            reservoir: Arc::new(RwLock::new(facts)),
+            reservoir: Arc::new(Reservoir::new(facts, 100)),
             dino_cache: Cache::builder().max_capacity(10).build(),
             http: reqwest::Client::new(),
             wiki_sem: Arc::new(Semaphore::new(2)),
