@@ -85,7 +85,9 @@ async fn llm_facts(http: &reqwest::Client, cfg: &LlmCfg, job: &LlmJob) -> Result
             "properties": {"facts": {"type": "array", "items": {"type": "string"}}},
             "required": ["facts"]
         },
-        "options": {"temperature": 0.2, "num_ctx": 4096},
+        // num_thread matches the sidecar's 3-CPU quota (extra threads get throttled to a crawl);
+        // num_predict stops a runaway generation from holding the single worker.
+        "options": {"temperature": 0.2, "num_ctx": 4096, "num_thread": 3, "num_predict": 500},
         "messages": [
             {"role": "system", "content": LLM_PROMPT},
             {"role": "user", "content": format!("Dinosaur: {}\n\nArticle:\n{}", job.title, article_for_llm(&job.extract))},
