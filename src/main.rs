@@ -105,7 +105,8 @@ async fn main() {
     // Per-IP Rate Limiter: 3 req/s sustained, 40 burst
     let gov = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(3)
+            // per_second(n) is the refill *interval* in seconds, so per_second(3) meant 1 request / 3 s.
+            .per_millisecond(333)
             .burst_size(40)
             .finish()
             .unwrap(),

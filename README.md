@@ -57,7 +57,7 @@ Without Docker: `cargo run --release` (listens on `0.0.0.0:8080`).
 - **Ranking** (`src/extract.rs`). Sentences are scored on trivia vocabulary, measurements, superlatives and whether they name the dinosaur. Scholarly hedging, specimen codes, citations and context-dependent openers are rejected, and the best 8 per dinosaur are kept.
 - **LLM upgrade** (`src/llm.rs`, optional). After the heuristic facts are cached, one worker asks the model for 3-5 facts per article and swaps them in. A fact is kept only if every number and about 85% of its longer words appear in the source article, so invented trivia is dropped. If the sidecar is down or returns too little, the heuristic facts stay.
 - **Telemetry** (`src/stats.rs`). A fixed ring of 1,440 one-minute atomic slots covers 24 hours with no allocation and no disk writes.
-- **Limits.** Per-IP rate limit of 3 requests/s with a burst of 40; no database, no external state.
+- **Limits.** Per-IP rate limit with a burst of 40, then 3 requests/s (one every 333 ms); over-limit requests get an immediate `429` with `Retry-After`. No database, no external state.
 
 ## Known limitation
 
