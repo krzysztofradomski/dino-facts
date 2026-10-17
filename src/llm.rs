@@ -19,7 +19,7 @@ pub struct LlmCfg {
     pub model: String,
 }
 
-const LLM_PROMPT: &str = "You extract dinosaur trivia from an article. Pick 3 to 5 surprising, self-contained facts. \
+const LLM_PROMPT: &str = "You extract dinosaur trivia from an article. Pick 5 to 8 surprising, self-contained facts. \
 Rules: each fact is exactly ONE sentence of 60-200 characters; copy a sentence from the article almost word for word \
 (only swap pronouns for the dinosaur's name) and never add conclusions, explanations or comparisons the article \
 does not state; always name the dinosaur explicitly (never 'it' or 'they'); \
