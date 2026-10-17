@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       - BIND_ADDR=0.0.0.0:8080
-      - WIKI_USER_AGENT=dino-trivia/1.0 (https://dino.yourdomain.com; admin@yourdomain.com) reqwest/0.12
+      - WIKI_USER_AGENT=dino-trivia/1.0 (https://dinofacts.fyi; hello@radomski.dev) reqwest/0.12
       # Remove OLLAMA_URL to run heuristic-only (no LLM sidecar needed).
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:3b-instruct

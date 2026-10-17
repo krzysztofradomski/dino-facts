@@ -139,7 +139,7 @@ pub struct Params {
 #[tokio::main]
 async fn main() {
     let user_agent = std::env::var("WIKI_USER_AGENT").unwrap_or_else(|_| {
-        "dino-trivia/1.0 (https://dino.example.com; contact@example.com) reqwest/0.12".to_string()
+        "dino-trivia/1.0 (https://dinofacts.fyi; hello@radomski.dev) reqwest/0.12".to_string()
     });
 
     let http = reqwest::Client::builder()
@@ -831,9 +831,10 @@ fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params) -> Respo
         <p><a href="/">🔄 Another Random Fact</a> &nbsp;|&nbsp; <a href="/stats">📊 24h Live Stats</a></p>
         <hr style="border:0;border-top:1px solid #30363d;margin:2rem 0">
         <p><small>Terminal usage:<br>
-        • Random card: <code>curl -s https://dino.yourdomain.com</code><br>
-        • Specific dino: <code>curl -s https://dino.yourdomain.com/ankylosaurus</code><br>
-        • One-liner (for .bashrc): <code>curl -s "https://dino.yourdomain.com?q"</code></small></p>
+        • Random card: <code>curl -s https://dinofacts.fyi</code><br>
+        • Specific dino: <code>curl -s https://dinofacts.fyi/ankylosaurus</code><br>
+        • One-liner (for .bashrc): <code>curl -s "https://dinofacts.fyi?q"</code></small></p>
+        <p><small><a href="https://github.com/krzysztofradomski/dino-facts">github.com/krzysztofradomski/dino-facts</a></small></p>
         </body></html>"#,
         esc(&fact.dino), esc(&fact.dino), esc(&fact.category), esc(&fact.fact), esc(&fact.wiki_url), esc(&fact.dino)
     );
