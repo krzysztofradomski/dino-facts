@@ -11,6 +11,9 @@ services:
       - OLLAMA_MODEL=qwen2.5:3b-instruct
       # Keep equal to the ollama CPU limit below; more threads than quota get throttled to a crawl.
       - OLLAMA_NUM_THREAD=2
+      # Key the rate limiter on the real client behind Cloudflare. Only safe while the origin is reachable
+      # solely through Cloudflare (otherwise clients can forge this header); remove it to key on the peer IP.
+      - CLIENT_IP_HEADER=CF-Connecting-IP
     depends_on:
       - ollama
     ports:

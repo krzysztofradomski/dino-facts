@@ -1,5 +1,6 @@
 mod extract;
 mod genera;
+mod limiter;
 mod llm;
 mod render;
 mod reservoir;
@@ -125,9 +126,12 @@ async fn main() {
         }
     });
 
-    // Per-IP Rate Limiter: 3 req/s sustained, 40 burst
+    // Per-client rate limiter: 3 req/s sustained, 40 burst. Behind a proxy, set CLIENT_IP_HEADER
+    // (e.g. CF-Connecting-IP) so clients are keyed by their real address instead of the proxy's.
+    let client_ip_header = std::env::var("CLIENT_IP_HEADER").ok();
     let gov = Arc::new(
         GovernorConfigBuilder::default()
+            .key_extractor(limiter::ClientIp::new(client_ip_header.as_deref()))
             // per_second(n) is the refill *interval* in seconds, so per_second(3) meant 1 request / 3 s.
             .per_millisecond(333)
             .burst_size(40)

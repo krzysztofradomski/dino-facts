@@ -47,6 +47,7 @@ Without Docker: `cargo run --release` (listens on `0.0.0.0:8080`).
 | `WIKI_USER_AGENT` | `dino-trivia/1.0 (https://dinofacts.fyi; hello@radomski.dev) reqwest/0.12` | Sent to Wikipedia; Wikimedia expects a real contact |
 | `OLLAMA_URL` | unset | Enables LLM fact extraction, e.g. `http://ollama:11434` |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct` | Model the worker asks for |
+| `CLIENT_IP_HEADER` | unset | Header carrying the real client IP behind a proxy (e.g. `CF-Connecting-IP`); unset keys the rate limit on the connecting address |
 | `OLLAMA_NUM_THREAD` | `2` | Inference threads; keep equal to the sidecar's CPU limit (sized for a 2 vCPU / 8 GB host) |
 
 ## How it works
@@ -59,9 +60,9 @@ Without Docker: `cargo run --release` (listens on `0.0.0.0:8080`).
 - **Telemetry** (`src/stats.rs`). A fixed ring of 1,440 one-minute atomic slots covers 24 hours with no allocation and no disk writes.
 - **Limits.** Per-IP rate limit with a burst of 40, then 3 requests/s (one every 333 ms); over-limit requests get an immediate `429` with `Retry-After`. No database, no external state.
 
-## Known limitation
+## Running behind a proxy
 
-The rate limiter keys on the connecting IP. Behind a reverse proxy or Cloudflare every client shares the proxy's address, so the limit applies to all visitors together. Use a forwarded-IP key extractor before putting the service behind one.
+By default the rate limiter keys on the connecting address, so behind Traefik or Cloudflare every visitor would share one bucket. Set `CLIENT_IP_HEADER` to the header your proxy overwrites with the real client IP (`CF-Connecting-IP` behind Cloudflare). Only do this if the origin is reachable solely through that proxy; otherwise a client can forge the header to dodge the limit. A missing or unparsable header falls back to the connecting address.
 
 ## Development
 
