@@ -1,5 +1,5 @@
 use crate::{
-    extract::{TriviaFact, MAX_FACTS_PER_DINO, SKIP_SECTIONS},
+    extract::{pick_diverse, topic, topic_label, TriviaFact, SKIP_SECTIONS},
     AppState,
 };
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -23,7 +23,8 @@ const LLM_PROMPT: &str = "You extract dinosaur trivia from an article. Pick 5 to
 Rules: each fact is exactly ONE sentence of 60-200 characters; copy a sentence from the article almost word for word \
 (only swap pronouns for the dinosaur's name) and never add conclusions, explanations or comparisons the article \
 does not state; always name the dinosaur explicitly (never 'it' or 'they'); \
-prefer sizes, speeds, senses, diet, behaviour, injuries, discovery stories and the meaning of the name; skip \
+cover a MIX of topics: what it ate, where and when it lived (period, environment, neighbours), behaviour, \
+discovery stories and the meaning of the name; at most 3 facts about size or anatomy; skip \
 classification, specimen codes, citations and scientific disputes. Reply with JSON only: {\"facts\": [\"...\"]}";
 
 // One job at a time keeps the CPU-only sidecar from thrashing; the channel bounds the backlog.
@@ -117,29 +118,35 @@ async fn llm_facts(http: &reqwest::Client, cfg: &LlmCfg, job: &LlmJob) -> Result
         if ok {
             out.push(TriviaFact {
                 dino: job.title.clone(),
-                category: "Trivia".into(),
+                category: topic_label(topic(f)).into(),
                 fact: f.to_string(),
                 wiki_url: wiki_url.clone(),
             });
         }
     }
-    out.truncate(MAX_FACTS_PER_DINO);
-    Ok(out)
+    // Equal scores keep the model's order; the body cap still applies.
+    Ok(pick_diverse(out.into_iter().map(|f| (0, f)).collect()))
 }
+
+// Per top-level section, so a long Description can't crowd out Paleoecology near the end.
+const MAX_SECTION_CHARS: usize = 2500;
 
 // Article text minus dry sections, trimmed to fit the model's 4k context.
 fn article_for_llm(extract: &str) -> String {
-    let mut skip = false;
+    let (mut skip, mut sec_len) = (false, 0);
     let mut out = String::new();
     for line in extract.lines().map(str::trim) {
         if line.starts_with("==") && line.ends_with("==") && !line.starts_with("===") {
             let l = line.to_lowercase();
             skip = SKIP_SECTIONS.iter().any(|s| l.contains(s));
+            sec_len = 0;
         }
-        if skip || line.is_empty() {
+        if skip || line.is_empty() || sec_len >= MAX_SECTION_CHARS {
             continue;
         }
-        out.push_str(line);
+        let part: String = line.chars().take(MAX_SECTION_CHARS - sec_len).collect();
+        sec_len += part.chars().count();
+        out.push_str(&part);
         out.push('\n');
     }
     out.chars().take(9000).collect()
@@ -203,11 +210,13 @@ mod tests {
     #[test]
     fn article_for_llm_drops_dry_sections_and_caps_length() {
         let text = format!(
-            "Intro text.\n== Description ==\nGood body.\n== References ==\nCite me.\n== Behavior ==\n{}",
-            "x".repeat(20_000)
+            "Intro text.\n== Description ==\nGood body.\n{}\n== References ==\nCite me.\n== Paleoecology ==\nLived by a lake.\n{}",
+            "x".repeat(20_000),
+            "y".repeat(5 * MAX_SECTION_CHARS)
         );
         let out = article_for_llm(&text);
         assert!(out.contains("Good body.") && !out.contains("Cite me."));
-        assert_eq!(out.chars().count(), 9000);
+        assert!(out.contains("Lived by a lake."), "a long Description must not push later sections out");
+        assert!(out.chars().count() <= 9000);
     }
 }

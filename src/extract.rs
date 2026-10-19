@@ -15,9 +15,11 @@ pub const SKIP_SECTIONS: &[&str] = &[
     "see also", "references", "external links", "further reading", "classification",
     "phylogeny", "notes", "bibliography", "gallery",
 ];
+// Stems, so both "paleo" and "palaeo" spellings match.
 const GOOD_SECTIONS: &[&str] = &[
-    "description", "paleobiology", "behavio", "feeding", "diet", "reproduction", "growth",
-    "senses", "locomotion", "cultural", "etymology", "discovery", "paleoecology", "pathology",
+    "description", "biology", "behavio", "feeding", "diet", "reproduction", "growth",
+    "senses", "locomotion", "cultural", "etymology", "discovery", "ecology", "environment",
+    "habitat", "pathology",
 ];
 const DRY_SECTIONS: &[&str] = &["history", "taxonomy", "species", "specimen", "systematics"];
 
@@ -52,6 +54,79 @@ const UNITS: &[&str] = &[
     "tonnes", "tons", "kilograms", "km/h", "mph", "kilometres", "kilometers", "million",
     "years",
 ];
+
+// Topic buckets keep a dino's facts from all being measurements.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Topic {
+    Diet,
+    World,
+    Body,
+    Other,
+}
+const DIET_WORDS: &[&str] = &[
+    "herbivor", "carnivor", "omnivor", "piscivor", "insectivor", "diet", "plant", "fern",
+    "conifer", "cycad", "seed", "fruit", "leaves", "vegetation", "fish", "insect", "prey",
+    "hunt", "scaveng", "gastrolith", "stomach", "eat", "fed", "feed", "forag", "brows", "graz",
+];
+const WORLD_WORDS: &[&str] = &[
+    "lived", "cretaceous", "jurassic", "triassic", "epoch", "formation", "habitat",
+    "environment", "forest", "river", "lake", "delta", "coast", "floodplain", "desert", "dune",
+    "island", "swamp", "lagoon", "climate", "alongside", "coexist", "contemporar", "fauna",
+    "flora", "ago",
+];
+const BODY_WORDS: &[&str] = &[
+    "teeth", "tooth", "skull", "jaw", "horn", "crest", "frill", "claw", "tail", "neck", "limb",
+    "leg", "arm", "vertebra", "bone", "spike", "armor", "armour", "plate", "feather", "skin",
+    "long", "tall", "weigh", "length", "measur", "sized", "brain",
+];
+// Max body facts per dino; the other slots go to diet, habitat/era and other facts.
+pub const MAX_BODY_FACTS: usize = 3;
+
+pub fn topic(s: &str) -> Topic {
+    let lower = s.to_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let any = |ks: &[&str]| ks.iter().any(|k| words.iter().any(|w| w.starts_with(k)));
+    if any(DIET_WORDS) {
+        Topic::Diet
+    } else if any(WORLD_WORDS) {
+        Topic::World
+    } else if any(BODY_WORDS) || has_measurement(&s.split_whitespace().collect::<Vec<_>>()) {
+        Topic::Body
+    } else {
+        Topic::Other
+    }
+}
+
+pub fn topic_label(t: Topic) -> &'static str {
+    match t {
+        Topic::Diet => "Diet",
+        Topic::World => "Habitat & era",
+        Topic::Body => "Anatomy",
+        Topic::Other => "Trivia",
+    }
+}
+
+// Best-first, but at most MAX_BODY_FACTS body facts so diet and habitat facts get a slot.
+// ponytail: no backfill, so a body-only article yields fewer facts; that's what rebalances the pool.
+pub fn pick_diverse(mut scored: Vec<(i32, TriviaFact)>) -> Vec<TriviaFact> {
+    // Stable sort: ties keep article order.
+    scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    let mut body = 0;
+    let mut out = Vec::new();
+    for (_, f) in scored {
+        if topic(&f.fact) == Topic::Body {
+            if body == MAX_BODY_FACTS {
+                continue;
+            }
+            body += 1;
+        }
+        out.push(f);
+        if out.len() == MAX_FACTS_PER_DINO {
+            break;
+        }
+    }
+    out
+}
 
 fn is_year(t: &str) -> bool {
     t.len() == 4 && t.parse::<u16>().is_ok_and(|y| (1800..2100).contains(&y))
@@ -129,6 +204,10 @@ fn score_sentence(s: &str, dino: &str, section: &str) -> Option<i32> {
     if lower.contains(&dino_l) {
         score += 2;
     }
+    let t = topic(s);
+    if matches!(t, Topic::Diet | Topic::World) {
+        score += 3;
+    }
     if (80..=170).contains(&n) {
         score += 1;
     }
@@ -143,7 +222,8 @@ fn score_sentence(s: &str, dino: &str, section: &str) -> Option<i32> {
                 && !dino_l.contains(&t.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
         })
         .count();
-    if names >= 3 {
+    // Habitat facts are naturally full of formation, place and neighbour names.
+    if names >= 3 && t != Topic::World {
         score -= 3;
     }
     let sec = section.to_lowercase();
@@ -203,10 +283,7 @@ pub fn extract_trivia_nuggets(dino_title: &str, full_text: &str) -> Vec<TriviaFa
             ));
         }
     }
-    // Stable sort: ties keep article order.
-    scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-    scored.truncate(MAX_FACTS_PER_DINO);
-    scored.into_iter().map(|(_, f)| f).collect()
+    pick_diverse(scored)
 }
 
 #[cfg(test)]
@@ -243,12 +320,27 @@ mod tests {
     }
 
     #[test]
-    fn keeps_at_most_max_facts() {
+    fn caps_body_facts_so_diet_and_habitat_get_slots() {
         let sentences: String = (1..=20)
             .map(|n| format!("Triceratops had a bony frill and horns stretching {n} metres across the skull of adults. "))
             .collect();
-        let text = format!("== Description ==\n{}", sentences.trim_end());
-        assert_eq!(texts("Triceratops", &text).len(), MAX_FACTS_PER_DINO);
+        let text = format!(
+            "== Description ==\n{}\n== Palaeoecology ==\n\
+             Triceratops lived in the Hell Creek Formation alongside Tyrannosaurus and Edmontosaurus.\n\
+             == Diet ==\nTriceratops was a herbivore that sliced tough plants such as cycads and palms.",
+            sentences.trim_end()
+        );
+        let facts = texts("Triceratops", &text);
+        assert_eq!(facts.len(), MAX_BODY_FACTS + 2, "{facts:?}");
+        assert!(facts.iter().any(|f| f.contains("herbivore")), "{facts:?}");
+        assert!(facts.iter().any(|f| f.contains("Hell Creek")), "{facts:?}");
+    }
+
+    #[test]
+    fn classifies_topics() {
+        assert_eq!(topic("Edmontosaurus lived on coastal floodplains 66 million years ago."), Topic::World);
+        assert_eq!(topic("Baryonyx ate fish, judging by scales in its stomach."), Topic::Diet);
+        assert_eq!(topic("Ankylosaurus had a tail club and was 8 m long."), Topic::Body);
     }
 
     #[test]
