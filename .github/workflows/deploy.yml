@@ -1,0 +1,38 @@
+# Manual deploy: copies the source to the VPS and rebuilds dino-trivia there.
+# Secrets: VPS_SSH_KEY (private key for root@VPS), VPS_KNOWN_HOSTS (`ssh-keyscan -t ed25519 <ip>` output).
+# Variable: VPS_HOST (e.g. 148.230.110.51).
+name: Deploy to VPS
+
+on:
+  workflow_dispatch:
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        env:
+          KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519
+
+      # Only the build inputs; the VPS keeps its own docker-compose.yml, Dockerfile and .env.
+      - name: Copy source and rebuild
+        env:
+          HOST: ${{ vars.VPS_HOST }}
+        run: |
+          tar czf - Cargo.toml Cargo.lock src | ssh -o BatchMode=yes "root@$HOST" \
+            'cd /docker/dino-facts && tar xzf - && docker compose up -d --build dino-trivia'
+
+      - name: Smoke test
+        run: |
+          sleep 10
+          curl -fsS -o /dev/null -w '%{http_code}\n' https://dinofacts.fyi/stats
