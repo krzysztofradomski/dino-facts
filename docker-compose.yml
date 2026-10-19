@@ -21,7 +21,12 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=dino-facts_default
-      - traefik.http.routers.dino-trivia.rule=Host(`dinofacts.fyi`)
+      - traefik.http.routers.dino-trivia.rule=Host(`dinofacts.fyi`) || Host(`www.dinofacts.fyi`)
+      # www → apex, permanent, so there's one canonical address.
+      - traefik.http.routers.dino-trivia.middlewares=dino-www-redirect
+      - traefik.http.middlewares.dino-www-redirect.redirectregex.regex=^https?://www\.dinofacts\.fyi/(.*)
+      - traefik.http.middlewares.dino-www-redirect.redirectregex.replacement=https://dinofacts.fyi/$${1}
+      - traefik.http.middlewares.dino-www-redirect.redirectregex.permanent=true
       - traefik.http.routers.dino-trivia.entrypoints=websecure
       - traefik.http.routers.dino-trivia.tls.certresolver=letsencrypt
       - traefik.http.services.dino-trivia.loadbalancer.server.port=8080
