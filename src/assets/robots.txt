@@ -1,0 +1,8 @@
+# Search engines and AI assistants are welcome. Facts are CC BY-SA 4.0, quoted from Wikipedia.
+User-agent: *
+Allow: /
+Disallow: /stats
+
+Content-Signal: search=yes, ai-input=yes
+
+Sitemap: https://dinofacts.fyi/sitemap.xml

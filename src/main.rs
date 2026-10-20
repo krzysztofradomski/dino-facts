@@ -8,8 +8,8 @@ mod stats;
 
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Response},
+    http::{header, HeaderMap, StatusCode},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::get,
     Router,
 };
@@ -156,8 +156,35 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(random_trivia_handler))
         .route("/stats", get(stats_handler))
+        .route("/robots.txt", get(|| static_file("text/plain; charset=utf-8", include_str!("assets/robots.txt"))))
+        .route("/llms.txt", get(|| static_file("text/plain; charset=utf-8", include_str!("assets/llms.txt"))))
+        .route("/favicon.svg", get(|| static_file("image/svg+xml", include_str!("assets/favicon.svg"))))
+        .route("/og.png", get(|| static_file("image/png", include_bytes!("assets/og.png").as_slice())))
+        .route("/favicon.ico", get(|| async { Redirect::permanent("/favicon.svg") }))
+        .route("/sitemap.xml", get(sitemap))
         .route("/{dino}", get(specific_dino_handler))
         .with_state(state)
+}
+
+async fn static_file(content_type: &'static str, body: impl IntoResponse) -> Response {
+    (
+        [(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "public, max-age=86400")],
+        body,
+    )
+        .into_response()
+}
+
+// ponytail: only the built-in seeds, which are always cached; listing all 1,400 genera would make
+// every crawl trigger fresh Wikipedia fetches.
+async fn sitemap() -> Response {
+    let urls: String = std::iter::once(String::new())
+        .chain(DINO_POOL.iter().map(|d| d.to_string()))
+        .map(|p| format!("<url><loc>{}/{p}</loc></url>", render::SITE))
+        .collect();
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>"#
+    );
+    static_file("application/xml", xml).await
 }
 
 // --- HTTP Handlers ---
@@ -169,7 +196,7 @@ async fn random_trivia_handler(
 ) -> Response {
     state.stats.rec_req();
     match state.reservoir.random() {
-        Some(fact) => render_fact(&fact, &headers, &params),
+        Some(fact) => render_fact(&fact, &headers, &params, true),
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             "Warming up fossil beds...\n",
@@ -188,7 +215,7 @@ async fn specific_dino_handler(
     match get_or_harvest_dino(&dino, &state).await {
         Ok(facts) => {
             if let Some(chosen) = facts.choose(&mut rand::thread_rng()) {
-                render_fact(chosen, &headers, &params)
+                render_fact(chosen, &headers, &params, false)
             } else {
                 (
                     StatusCode::NOT_FOUND,
@@ -350,6 +377,20 @@ mod tests {
         let (status, body) = get(&s, "/?q").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "🦖 [Tyrannosaurus] Big teeth.\n");
+    }
+
+    // Static routes must win over /{dino}, or they'd be looked up as dinosaur names.
+    #[tokio::test]
+    async fn discovery_files_are_served() {
+        let s = state(vec![]);
+        let (status, robots) = get(&s, "/robots.txt").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(robots.contains("Sitemap: https://dinofacts.fyi/sitemap.xml"));
+        assert!(get(&s, "/llms.txt").await.1.starts_with("# Dino Trivia"));
+        let (_, sitemap) = get(&s, "/sitemap.xml").await;
+        assert!(sitemap.contains("<loc>https://dinofacts.fyi/</loc>"));
+        assert!(sitemap.contains("<loc>https://dinofacts.fyi/Triceratops</loc>"));
+        assert_eq!(get(&s, "/favicon.ico").await.0, StatusCode::PERMANENT_REDIRECT);
     }
 
     #[tokio::test]

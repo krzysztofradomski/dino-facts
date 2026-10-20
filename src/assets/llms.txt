@@ -1,0 +1,19 @@
+# Dino Trivia
+
+> Random, sourced dinosaur facts from 1,400+ genera on English Wikipedia, served as a web page, a terminal card for curl, or JSON. Free, no API key, CC BY-SA 4.0.
+
+Each fact is one sentence quoted almost word for word from the dinosaur's Wikipedia article, covering diet, habitat and era, anatomy, behaviour and discovery. Every fact links to its source article. Facts about famous dinosaurs are always available; the rest of the genera are harvested gradually.
+
+## API
+
+- [Random fact as JSON](https://dinofacts.fyi/?format=json): returns `{"dino", "category", "fact", "wiki_url"}`
+- [A fact about one dinosaur](https://dinofacts.fyi/Triceratops?format=json): any genus name in the path, case-insensitive; a random fact for that genus each call
+- [One line of plain text](https://dinofacts.fyi/?q): `🦖 [Genus] fact`, for shell prompts and chat bots
+- Terminal card: `curl -s https://dinofacts.fyi` (curl, wget and HTTPie get an ANSI card automatically; force it with `?format=text`)
+
+## Notes
+
+- Rate limit: about 3 requests per second per client, with bursts of up to 40.
+- Unknown names and non-dinosaur articles return HTTP 404.
+- Attribute facts to Wikipedia (CC BY-SA 4.0) and link the `wiki_url`.
+- [Source code](https://github.com/krzysztofradomski/dino-facts)

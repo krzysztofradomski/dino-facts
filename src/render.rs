@@ -14,7 +14,40 @@ pub struct Params {
 
 // --- Output Rendering ---
 
-pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params) -> Response {
+pub const SITE: &str = "https://dinofacts.fyi";
+const SITE_TITLE: &str = "Dino Trivia — Random Dinosaur Facts for Browser & Terminal";
+const SITE_DESC: &str = "A random, sourced dinosaur fact on every visit, from 1,400+ Wikipedia genera: diet, \
+habitat, era and anatomy. Free JSON API and curl-friendly terminal cards.";
+
+// <head> shared by every HTML page: SEO basics plus Open Graph / Twitter cards for link previews.
+fn head(title: &str, desc: &str, path: &str) -> String {
+    let (title, desc, url) = (esc(title), esc(desc), format!("{SITE}{path}"));
+    format!(
+        r##"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>{title}</title><meta name="description" content="{desc}">
+        <link rel="canonical" href="{url}"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+        <meta name="theme-color" content="#0d1117">
+        <meta property="og:type" content="website"><meta property="og:site_name" content="Dino Trivia">
+        <meta property="og:title" content="{title}"><meta property="og:description" content="{desc}">
+        <meta property="og:url" content="{url}"><meta property="og:image" content="{SITE}/og.png">
+        <meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+        <meta property="og:image:alt" content="Dino Trivia: a random, sourced dinosaur fact. curl dinofacts.fyi">
+        <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{title}">
+        <meta name="twitter:description" content="{desc}"><meta name="twitter:image" content="{SITE}/og.png">"##
+    )
+}
+
+// Search snippets cut off around 160 characters; trim on a word boundary.
+fn snippet(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let cut: String = s.chars().take(max - 1).collect();
+    format!("{}…", cut.rsplit_once(' ').map_or(cut.as_str(), |(a, _)| a))
+}
+
+// `home` = the random-fact homepage, which keeps a stable title and description for search and sharing.
+pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params, home: bool) -> Response {
     if params.format.as_deref() == Some("json") {
         return Json(fact).into_response();
     }
@@ -55,8 +88,19 @@ pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params) -> R
         return ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], out).into_response();
     }
 
+    let head = if home {
+        // JSON-LD is data, not script, so the strict CSP doesn't block it.
+        let ld = format!(
+            r#"<script type="application/ld+json">{{"@context":"https://schema.org","@type":"WebSite","name":"Dino Trivia","url":"{SITE}","description":"{}"}}</script>"#,
+            SITE_DESC.replace('"', "\\\"")
+        );
+        head(SITE_TITLE, SITE_DESC, "/") + &ld
+    } else {
+        let desc = snippet(&format!("{} (Source: Wikipedia)", fact.fact), 160);
+        head(&format!("{} Facts — Dino Trivia", fact.dino), &desc, &format!("/{}", fact.dino.replace(' ', "_")))
+    };
     let html = format!(
-        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Dino Trivia — {}</title>
+        r#"<!DOCTYPE html><html lang="en"><head>{head}
         <style>body{{background:#0d1117;color:#e6edf3;font-family:ui-monospace,monospace;max-width:680px;margin:4rem auto;padding:0 1.2rem}}
         .box{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 8px 24px rgba(0,0,0,0.4)}}
         .tag{{background:#238636;color:#fff;padding:0.2rem 0.6rem;border-radius:4px;font-size:0.8rem}}
@@ -77,10 +121,10 @@ pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params) -> R
         • One-liner (for .bashrc): <code>curl -s "https://dinofacts.fyi?q"</code></small></p>
         <p><small><a href="https://github.com/krzysztofradomski/dino-facts">github.com/krzysztofradomski/dino-facts</a></small></p>
         </body></html>"#,
-        esc(&fact.dino), esc(&fact.dino), esc(&fact.category), esc(&fact.fact), esc(&fact.wiki_url), esc(&fact.dino)
+        esc(&fact.dino), esc(&fact.category), esc(&fact.fact), esc(&fact.wiki_url), esc(&fact.dino)
     );
     (
-        [(header::CONTENT_SECURITY_POLICY, "default-src 'none'; style-src 'unsafe-inline'")],
+        [(header::CONTENT_SECURITY_POLICY, "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'")],
         Html(html),
     )
         .into_response()
@@ -130,7 +174,9 @@ pub fn stats_page(reqs: u64, wiki_calls: u64, pool_size: u64, hourly: &[u64]) ->
         .collect();
 
     format!(
-        r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>24h Stats — Dino Trivia</title>
+        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>24h Stats — Dino Trivia</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml">
         <style>body{{background:#0d1117;color:#e6edf3;font-family:monospace;max-width:680px;margin:4rem auto;padding:0 1.2rem}}
         .grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:1.5rem 0}}
         .card{{background:#161b22;border:1px solid #30363d;padding:1rem;border-radius:8px}}
@@ -173,9 +219,13 @@ mod tests {
     }
 
     async fn render(ua: &str, p: Params, f: &TriviaFact) -> (axum::http::response::Parts, String) {
+        render_page(ua, p, f, false).await
+    }
+
+    async fn render_page(ua: &str, p: Params, f: &TriviaFact, home: bool) -> (axum::http::response::Parts, String) {
         let mut headers = HeaderMap::new();
         headers.insert(header::USER_AGENT, HeaderValue::from_str(ua).unwrap());
-        let (parts, body) = render_fact(f, &headers, &p).into_parts();
+        let (parts, body) = render_fact(f, &headers, &p, home).into_parts();
         let bytes = to_bytes(body, usize::MAX).await.unwrap();
         (parts, String::from_utf8(bytes.to_vec()).unwrap())
     }
@@ -217,6 +267,23 @@ mod tests {
         assert!(parts.headers.contains_key(header::CONTENT_SECURITY_POLICY));
         assert!(!body.contains("<script>"));
         assert!(body.contains("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more"));
+    }
+
+    #[tokio::test]
+    async fn html_has_share_and_seo_tags() {
+        let long = fact(&format!("Tyrannosaurus \"rex\" {}", "had big teeth and ".repeat(20)));
+        let (_, page) = render_page("Mozilla/5.0", params(None, false), &long, false).await;
+        assert!(page.contains("<title>Tyrannosaurus Facts — Dino Trivia</title>"));
+        assert!(page.contains(r#"<link rel="canonical" href="https://dinofacts.fyi/Tyrannosaurus">"#));
+        assert!(page.contains(r#"property="og:image" content="https://dinofacts.fyi/og.png""#));
+        assert!(page.contains("name=\"viewport\""));
+        let desc = page.split(r#"name="description" content=""#).nth(1).unwrap().split('"').next().unwrap();
+        assert!(desc.ends_with('…') && desc.chars().count() <= 200, "{desc}");
+        assert!(desc.contains("&quot;rex&quot;"));
+
+        let (_, home) = render_page("Mozilla/5.0", params(None, false), &long, true).await;
+        assert!(home.contains(&format!("<title>{}</title>", esc(SITE_TITLE))));
+        assert!(home.contains(r#"href="https://dinofacts.fyi/">"#) && home.contains("application/ld+json"));
     }
 
     #[test]
