@@ -6,7 +6,8 @@ Each fact is one sentence quoted almost word for word from the dinosaur's Wikipe
 
 ## API
 
-- [Random fact as JSON](https://dinofacts.fyi/?format=json): returns `{"dino", "category", "fact", "wiki_url"}`
+- [Random fact as JSON](https://dinofacts.fyi/?format=json): returns `{"dino", "category", "fact", "wiki_url", "permalink"}`
+- Permalink: `https://dinofacts.fyi/Triceratops?fact=<id>` always shows that one fact (link previews included); use the `permalink` from JSON to cite or share a fact
 - [A fact about one dinosaur](https://dinofacts.fyi/Triceratops?format=json): any genus name in the path, case-insensitive; a random fact for that genus each call
 - [One line of plain text](https://dinofacts.fyi/?q): `🦖 [Genus] fact`, for shell prompts and chat bots
 - Terminal card: `curl -s https://dinofacts.fyi` (curl, wget and HTTPie get an ANSI card automatically; force it with `?format=text`)

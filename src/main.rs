@@ -214,7 +214,9 @@ async fn specific_dino_handler(
     state.stats.rec_req();
     match get_or_harvest_dino(&dino, &state).await {
         Ok(facts) => {
-            if let Some(chosen) = facts.choose(&mut rand::thread_rng()) {
+            // A permalink whose fact was since replaced (e.g. by the LLM) falls back to a random one.
+            let pinned = params.fact.as_deref().and_then(|id| facts.iter().find(|f| render::fact_id(f) == id));
+            if let Some(chosen) = pinned.or_else(|| facts.choose(&mut rand::thread_rng())) {
                 render_fact(chosen, &headers, &params, false)
             } else {
                 (
@@ -408,6 +410,21 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "🦖 [Ankylosaurus] Armoured tail club.\n");
         assert_eq!(s.stats.snapshot().1, 0);
+    }
+
+    #[tokio::test]
+    async fn permalink_pins_the_exact_fact_and_falls_back_when_gone() {
+        let s = state(vec![]);
+        let facts: Vec<TriviaFact> = (0..8).map(|n| fact("Ankylosaurus", &format!("Fact number {n}."))).collect();
+        let target = facts[5].clone();
+        s.dino_cache.insert("Ankylosaurus".into(), Arc::new(facts)).await;
+        let uri = format!("{}&q", render::permalink(&target));
+        for _ in 0..10 {
+            assert_eq!(get(&s, &uri).await.1, "🦖 [Ankylosaurus] Fact number 5.\n");
+        }
+        let (status, body) = get(&s, "/Ankylosaurus?fact=deadbeef&q").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.starts_with("🦖 [Ankylosaurus] Fact number"), "{body}");
     }
 
     #[tokio::test]

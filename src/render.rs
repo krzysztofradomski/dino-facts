@@ -10,6 +10,18 @@ use serde::Deserialize;
 pub struct Params {
     pub format: Option<String>,
     pub q: Option<String>,
+    pub fact: Option<String>,
+}
+
+// Short, stable fact ID for permalinks. FNV-1a, because std's hasher may change between Rust releases.
+pub fn fact_id(f: &TriviaFact) -> String {
+    let h = f.fact.bytes().fold(0x811c9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x01000193));
+    format!("{h:08x}")
+}
+
+// The link that shows exactly this fact, e.g. /Triceratops?fact=1a2b3c4d.
+pub fn permalink(f: &TriviaFact) -> String {
+    format!("/{}?fact={}", f.dino.replace(' ', "_"), fact_id(f))
 }
 
 // --- Output Rendering ---
@@ -20,8 +32,10 @@ const SITE_DESC: &str = "A random, sourced dinosaur fact on every visit, from 1,
 habitat, era and anatomy. Free JSON API and curl-friendly terminal cards.";
 
 // <head> shared by every HTML page: SEO basics plus Open Graph / Twitter cards for link previews.
-fn head(title: &str, desc: &str, path: &str) -> String {
+// `og_path` is what a shared link points at; it can be more specific than the canonical page.
+fn head(title: &str, desc: &str, path: &str, og_path: &str) -> String {
     let (title, desc, url) = (esc(title), esc(desc), esc(&format!("{SITE}{path}")));
+    let og_url = esc(&format!("{SITE}{og_path}"));
     format!(
         r##"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{title}</title><meta name="description" content="{desc}">
@@ -29,7 +43,7 @@ fn head(title: &str, desc: &str, path: &str) -> String {
         <meta name="theme-color" content="#0d1117">
         <meta property="og:type" content="website"><meta property="og:site_name" content="Dino Trivia">
         <meta property="og:title" content="{title}"><meta property="og:description" content="{desc}">
-        <meta property="og:url" content="{url}"><meta property="og:image" content="{SITE}/og.png">
+        <meta property="og:url" content="{og_url}"><meta property="og:image" content="{SITE}/og.png">
         <meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
         <meta property="og:image:alt" content="Dino Trivia: a random, sourced dinosaur fact. curl dinofacts.fyi">
         <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{title}">
@@ -48,8 +62,11 @@ fn snippet(s: &str, max: usize) -> String {
 
 // `home` = the random-fact homepage, which keeps a stable title and description for search and sharing.
 pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params, home: bool) -> Response {
+    let link = permalink(fact);
     if params.format.as_deref() == Some("json") {
-        return Json(fact).into_response();
+        let mut v = serde_json::to_value(fact).unwrap_or_default();
+        v["permalink"] = format!("{SITE}{link}").into();
+        return Json(v).into_response();
     }
 
     if params.q.is_some() || params.format.as_deref() == Some("oneliner") {
@@ -94,10 +111,12 @@ pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params, home
             r#"<script type="application/ld+json">{{"@context":"https://schema.org","@type":"WebSite","name":"Dino Trivia","url":"{SITE}","description":"{}"}}</script>"#,
             SITE_DESC.replace('"', "\\\"")
         );
-        head(SITE_TITLE, SITE_DESC, "/") + &ld
+        head(SITE_TITLE, SITE_DESC, "/", "/") + &ld
     } else {
+        // Canonical stays the dino page for search; a shared link previews this exact fact.
         let desc = snippet(&format!("{} (Source: Wikipedia)", fact.fact), 160);
-        head(&format!("{} Facts — Dino Trivia", fact.dino), &desc, &format!("/{}", fact.dino.replace(' ', "_")))
+        let page = format!("/{}", fact.dino.replace(' ', "_"));
+        head(&format!("{} Facts — Dino Trivia", fact.dino), &desc, &page, &link)
     };
     let html = format!(
         r#"<!DOCTYPE html><html lang="en"><head>{head}
@@ -111,7 +130,7 @@ pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params, home
         <div class="box">
             <div><strong>{}</strong> &nbsp;<span class="tag">{}</span></div>
             <p class="fact">"{}"</p>
-            <small>Source: <a href="{}">Wikipedia ({})</a> • CC BY-SA 4.0</small>
+            <small>Source: <a href="{}">Wikipedia ({})</a> • CC BY-SA 4.0 • <a href="{}">🔗 Link to this fact</a></small>
         </div>
         <p><a href="/">🔄 Another Random Fact</a> &nbsp;|&nbsp; <a href="/stats">📊 24h Live Stats</a></p>
         <hr style="border:0;border-top:1px solid #30363d;margin:2rem 0">
@@ -121,7 +140,7 @@ pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params, home
         • One-liner (for .bashrc): <code>curl -s "https://dinofacts.fyi?q"</code></small></p>
         <p><small><a href="https://github.com/krzysztofradomski/dino-facts">github.com/krzysztofradomski/dino-facts</a></small></p>
         </body></html>"#,
-        esc(&fact.dino), esc(&fact.category), esc(&fact.fact), esc(&fact.wiki_url), esc(&fact.dino)
+        esc(&fact.dino), esc(&fact.category), esc(&fact.fact), esc(&fact.wiki_url), esc(&fact.dino), esc(&link)
     );
     (
         [(header::CONTENT_SECURITY_POLICY, "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'")],
@@ -215,7 +234,7 @@ mod tests {
     }
 
     fn params(format: Option<&str>, q: bool) -> Params {
-        Params { format: format.map(String::from), q: q.then(String::new) }
+        Params { format: format.map(String::from), q: q.then(String::new), fact: None }
     }
 
     async fn render(ua: &str, p: Params, f: &TriviaFact) -> (axum::http::response::Parts, String) {
@@ -276,6 +295,9 @@ mod tests {
         assert!(page.contains("<title>Tyrannosaurus Facts — Dino Trivia</title>"));
         assert!(page.contains(r#"<link rel="canonical" href="https://dinofacts.fyi/Tyrannosaurus">"#));
         assert!(page.contains(r#"property="og:image" content="https://dinofacts.fyi/og.png""#));
+        let og_url = format!(r#"property="og:url" content="https://dinofacts.fyi/Tyrannosaurus?fact={}""#, fact_id(&long));
+        assert!(page.contains(&og_url), "share link must preview this exact fact");
+        assert!(page.contains(&format!("href=\"/Tyrannosaurus?fact={}\"", fact_id(&long))));
         assert!(page.contains("name=\"viewport\""));
         let desc = page.split(r#"name="description" content=""#).nth(1).unwrap().split('"').next().unwrap();
         assert!(desc.ends_with('…') && desc.chars().count() <= 200, "{desc}");
