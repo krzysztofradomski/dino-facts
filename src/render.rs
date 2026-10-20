@@ -21,7 +21,7 @@ habitat, era and anatomy. Free JSON API and curl-friendly terminal cards.";
 
 // <head> shared by every HTML page: SEO basics plus Open Graph / Twitter cards for link previews.
 fn head(title: &str, desc: &str, path: &str) -> String {
-    let (title, desc, url) = (esc(title), esc(desc), format!("{SITE}{path}"));
+    let (title, desc, url) = (esc(title), esc(desc), esc(&format!("{SITE}{path}")));
     format!(
         r##"<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{title}</title><meta name="description" content="{desc}">
@@ -280,6 +280,10 @@ mod tests {
         let desc = page.split(r#"name="description" content=""#).nth(1).unwrap().split('"').next().unwrap();
         assert!(desc.ends_with('…') && desc.chars().count() <= 200, "{desc}");
         assert!(desc.contains("&quot;rex&quot;"));
+        let mut odd = fact("x");
+        odd.dino = "Evil\"><script>".into();
+        let (_, page) = render_page("Mozilla/5.0", params(None, false), &odd, false).await;
+        assert!(!page.contains("<script>") && page.contains("/Evil&quot;&gt;&lt;script&gt;\">"));
 
         let (_, home) = render_page("Mozilla/5.0", params(None, false), &long, true).await;
         assert!(home.contains(&format!("<title>{}</title>", esc(SITE_TITLE))));
