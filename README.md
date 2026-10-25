@@ -1,5 +1,7 @@
 # dino-facts
 
+![DinoFacts displaying a dinosaur fact in a terminal greeting](docs/terminal-demo.gif)
+
 A keyless dinosaur trivia API in the spirit of [wttr.in](https://github.com/chubin/wttr.in).
 One small Rust binary serves bite-sized facts harvested from Wikipedia to terminals, scripts and browsers.
 
