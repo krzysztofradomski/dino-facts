@@ -116,6 +116,8 @@ src/reservoir.rs bounded, rotating pool behind GET /
 src/stats.rs    24h rolling telemetry
 ```
 
-## Attribution
+## License and attribution
+
+The project code is available under the [MIT License](LICENSE).
 
 Facts come from Wikipedia and are available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); each fact links back to its source article.
