@@ -120,24 +120,31 @@ pub fn render_fact(fact: &TriviaFact, headers: &HeaderMap, params: &Params, home
     };
     let html = format!(
         r#"<!DOCTYPE html><html lang="en"><head>{head}
-        <style>body{{background:#0d1117;color:#e6edf3;font-family:ui-monospace,monospace;max-width:680px;margin:4rem auto;padding:0 1.2rem}}
+        <style>*{{box-sizing:border-box}}body{{background:#0d1117;color:#e6edf3;font-family:ui-monospace,monospace;max-width:720px;margin:4rem auto;padding:0 1.2rem;overflow-wrap:anywhere}}
         .box{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 8px 24px rgba(0,0,0,0.4)}}
         .tag{{background:#238636;color:#fff;padding:0.2rem 0.6rem;border-radius:4px;font-size:0.8rem}}
         .fact{{font-size:1.2rem;line-height:1.6;margin:1.2rem 0}}
         code{{background:#21262d;padding:0.2rem 0.5rem;border-radius:4px;color:#79c0ff}}
-        a{{color:#58a6ff;text-decoration:none}}</style></head><body>
+        a{{color:#58a6ff;text-decoration:none}}
+        .fact-heading,.nav{{display:flex;flex-wrap:wrap;align-items:center;gap:0.75rem 1rem}}
+        .nav a{{display:inline-block;padding:0.5rem 0}}
+        .usage{{list-style:none;padding:0;font-size:0.85rem;line-height:1.6}}
+        .usage li{{margin:1rem 0}}.usage code{{display:block;margin-top:0.25rem;white-space:pre-wrap}}
+        @media(max-width:600px){{body{{margin:2rem auto}}h1{{font-size:1.6rem}}.box{{padding:1.2rem}}.fact{{font-size:1.05rem}}}}
+        </style></head><body>
         <h1>🦖 Random Dinosaur Trivia</h1>
         <div class="box">
-            <div><strong>{}</strong> &nbsp;<span class="tag">{}</span></div>
+            <div class="fact-heading"><strong>{}</strong><span class="tag">{}</span></div>
             <p class="fact">"{}"</p>
             <small>Source: <a href="{}">Wikipedia ({})</a> • CC BY-SA 4.0 • <a href="{}">🔗 Link to this fact</a></small>
         </div>
-        <p><a href="/">🔄 Another Random Fact</a> &nbsp;|&nbsp; <a href="/stats">📊 24h Live Stats</a></p>
+        <nav class="nav" aria-label="Trivia"><a href="/">🔄 Another Random Fact</a><a href="/stats">📊 24h Live Stats</a></nav>
         <hr style="border:0;border-top:1px solid #30363d;margin:2rem 0">
-        <p><small>Terminal usage:<br>
-        • Random card: <code>curl -s https://dinofacts.fyi</code><br>
-        • Specific dino: <code>curl -s https://dinofacts.fyi/ankylosaurus</code><br>
-        • One-liner (for .bashrc): <code>curl -s "https://dinofacts.fyi?q"</code></small></p>
+        <p><small>Terminal usage:</small></p>
+        <ul class="usage">
+        <li>Random card: <code>curl -s https://dinofacts.fyi</code></li>
+        <li>Specific dino: <code>curl -s https://dinofacts.fyi/ankylosaurus</code></li>
+        <li>One-liner (for .bashrc): <code>curl -s "https://dinofacts.fyi?q"</code></li></ul>
         <p><small><a href="https://github.com/krzysztofradomski/dino-facts">github.com/krzysztofradomski/dino-facts</a></small></p>
         </body></html>"#,
         esc(&fact.dino), esc(&fact.category), esc(&fact.fact), esc(&fact.wiki_url), esc(&fact.dino), esc(&link)
@@ -185,9 +192,18 @@ pub fn stats_page(reqs: u64, wiki_calls: u64, pool_size: u64, hourly: &[u64]) ->
         .map(|(i, &r)| {
             let h = ((r as f64 / max_h as f64) * 85.0) as u32;
             let x = i * 24 + 8;
-            let y = 95 - h;
+            let y = 125 - h;
+            let label = format!("{r} request{}", if r == 1 { "" } else { "s" });
+            let tooltip_width = label.len() * 8 + 16;
+            let tooltip_x = (x as isize + 9 - tooltip_width as isize / 2)
+                .clamp(4, 581 - tooltip_width as isize);
+            let text_x = tooltip_x + tooltip_width as isize / 2;
             format!(
-                r##"<rect x="{x}" y="{y}" width="18" height="{h}" fill="#3fb950" rx="2"><title>{r} reqs</title></rect>"##
+                r##"<g class="bar" tabindex="0" role="img" aria-label="{label}">
+                <rect class="bar-hit" x="{x}" y="30" width="24" height="100" fill="transparent"/>
+                <rect class="column" x="{x}" y="{y}" width="18" height="{h}" fill="#3fb950" rx="2"/>
+                <g class="tooltip" aria-hidden="true"><rect x="{tooltip_x}" y="4" width="{tooltip_width}" height="24" rx="4" fill="#30363d"/>
+                <text x="{text_x}" y="20" text-anchor="middle" fill="#e6edf3" font-size="13">{label}</text></g></g>"##
             )
         })
         .collect();
@@ -196,10 +212,14 @@ pub fn stats_page(reqs: u64, wiki_calls: u64, pool_size: u64, hourly: &[u64]) ->
         r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>24h Stats — Dino Trivia</title>
         <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
         <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-        <style>body{{background:#0d1117;color:#e6edf3;font-family:monospace;max-width:680px;margin:4rem auto;padding:0 1.2rem}}
-        .grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:1.5rem 0}}
+        <style>*{{box-sizing:border-box}}body{{background:#0d1117;color:#e6edf3;font-family:monospace;max-width:720px;margin:4rem auto;padding:0 1.2rem;overflow-wrap:anywhere}}
+        .grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin:1.5rem 0}}
         .card{{background:#161b22;border:1px solid #30363d;padding:1rem;border-radius:8px}}
-        .val{{font-size:1.7rem;color:#3fb950;font-weight:bold;margin-top:0.3rem}}</style></head><body>
+        .val{{font-size:1.7rem;color:#3fb950;font-weight:bold;margin-top:0.3rem}}
+        .bar{{outline:none}}.bar-hit{{cursor:help}}.tooltip{{visibility:hidden;pointer-events:none}}
+        .bar:hover .tooltip,.bar:focus .tooltip{{visibility:visible}}
+        .bar:hover .column,.bar:focus .column{{fill:#79c0ff}}
+        @media(max-width:600px){{body{{margin:2rem auto}}h1{{font-size:1.6rem}}.grid{{grid-template-columns:1fr}}}}</style></head><body>
         <h1>📊 Last 24h Telemetry</h1>
         <div class="grid">
             <div class="card"><div>24h Trivia Served</div><div class="val">{reqs}</div></div>
@@ -207,7 +227,7 @@ pub fn stats_page(reqs: u64, wiki_calls: u64, pool_size: u64, hourly: &[u64]) ->
             <div class="card"><div>24h Wiki API Calls</div><div class="val">{wiki_calls}</div></div>
         </div>
         <h3>Hourly Requests (Last 24h)</h3>
-        <svg viewBox="0 0 585 100" style="background:#161b22;border:1px solid #30363d;border-radius:8px;width:100%">{bars}</svg>
+        <svg viewBox="0 0 585 130" role="group" aria-label="Hourly requests in the last 24 hours" style="background:#161b22;border:1px solid #30363d;border-radius:8px;width:100%">{bars}</svg>
         <p><a href="/" style="color:#58a6ff">← Back to random trivia</a></p>
         </body></html>"#
     )
@@ -326,6 +346,18 @@ mod tests {
         assert!(html.contains(r#"24h Trivia Served</div><div class="val">7</div>"#));
         assert!(html.contains(r#"Facts in Reservoir</div><div class="val">99</div>"#));
         assert!(html.contains(r#"24h Wiki API Calls</div><div class="val">3</div>"#));
-        assert_eq!(html.matches("<rect").count(), 24);
+        assert_eq!(html.matches(r#"class="bar""#).count(), 24);
+    }
+
+    #[test]
+    fn stats_bars_expose_counts_even_for_empty_hours() {
+        let mut hourly = [0; 24];
+        hourly[23] = u64::MAX;
+        let html = stats_page(7, 3, 99, &hourly);
+        assert_eq!(html.matches(r#"tabindex="0""#).count(), 24);
+        assert_eq!(html.matches(r#"class="bar-hit""#).count(), 24);
+        assert!(html.contains("0 requests</text>"));
+        assert!(html.contains(&format!("{} requests</text>", u64::MAX)));
+        assert!(html.contains(".bar:hover .tooltip,.bar:focus .tooltip"));
     }
 }

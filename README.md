@@ -6,7 +6,7 @@ A keyless dinosaur trivia API in the spirit of [wttr.in](https://github.com/chub
 One small Rust binary serves bite-sized facts harvested from Wikipedia to terminals, scripts and browsers.
 
 ```text
-$ curl -s localhost:8080/ankylosaurus
+$ curl -s https://dinofacts.fyi/ankylosaurus
 
   🦕 DINO TRIVIA: ANKYLOSAURUS (Description)
   ╭──────────────────────────────────────────────────────╮
@@ -19,27 +19,59 @@ $ curl -s localhost:8080/ankylosaurus
 
 | Request | Result |
 |---|---|
-| `curl localhost:8080/` | Random fact as an ANSI speech-bubble card |
-| `curl localhost:8080/stegosaurus` | Random fact about one dinosaur |
-| `curl "localhost:8080/?q"` | One plain line, for `.bashrc` or a MOTD |
-| `curl "localhost:8080/?format=json"` | `{dino, category, fact, wiki_url}` |
-| `curl "localhost:8080/?format=text"` | Force the terminal card |
-| browser | Dark-mode HTML card |
-| `/stats` | Last-24h requests, Wikipedia calls and reservoir size |
+| `curl https://dinofacts.fyi/` | Random fact as an ANSI speech-bubble card |
+| `curl https://dinofacts.fyi/stegosaurus` | Random fact about one dinosaur |
+| `curl "https://dinofacts.fyi/?q"` | One plain line, for `.bashrc` or a MOTD |
+| `curl "https://dinofacts.fyi/?format=json"` | `{dino, category, fact, wiki_url, permalink}` |
+| `curl "https://dinofacts.fyi/?format=text"` | Force the terminal card |
+| [Open in a browser](https://dinofacts.fyi/) | Dark-mode HTML card |
+| [Live stats](https://dinofacts.fyi/stats) | Last-24h requests, Wikipedia calls and reservoir size |
 
 `curl`, `wget`, `httpie` and `fetch` user agents get the terminal card automatically.
-The intended public address is `dinofacts.fyi` (not deployed yet).
+Use the “Link to this fact” link in the browser or the JSON `permalink` field to share a specific fact.
+If that fact has since been replaced in the cache, the link falls back to another fact about the same dinosaur.
 
 ## Run
+
+Run these commands from the repository root (the directory containing `Cargo.toml`).
+With the Rust toolchain installed, start the server without Ollama:
+
+```bash
+cargo run --release
+```
+
+It listens on `0.0.0.0:8080` by default. In a second terminal:
+
+```bash
+curl -s http://localhost:8080/
+curl -s "http://localhost:8080/?q"
+curl -s "http://localhost:8080/?format=json"
+curl -s http://localhost:8080/ankylosaurus
+```
+
+Open [localhost:8080](http://localhost:8080/) for the HTML card or
+[localhost:8080/stats](http://localhost:8080/stats) for telemetry.
+For any example in Usage, replace `https://dinofacts.fyi` with `http://localhost:8080` to use your local server.
+Keep `OLLAMA_URL` unset for heuristic-only extraction. A seed fact is available immediately;
+the background harvester fills the pool from Wikipedia. A specific-dinosaur request may wait for its first fetch.
+
+For a local Docker server without Ollama:
+
+```bash
+docker build -t dino-trivia .
+docker run --rm -p 127.0.0.1:8080:8080 dino-trivia
+```
+
+To run with the Ollama sidecar:
 
 ```bash
 docker compose up --build -d
 ```
 
-The compose file also starts an [Ollama](https://ollama.com) sidecar and pulls a ~2 GB model on first start.
-To run without it, delete the `ollama` service and the `OLLAMA_*` lines; facts then come from the heuristic ranker only.
-
-Without Docker: `cargo run --release` (listens on `0.0.0.0:8080`).
+The compose file starts [Ollama](https://ollama.com) and pulls a ~2 GB model on first start.
+It publishes the API on `127.0.0.1:8080` and includes production Traefik/Cloudflare settings.
+For local Compose use, remove `CLIENT_IP_HEADER` so the rate limiter uses the connecting address.
+If adapting Compose to run without Ollama, also remove `depends_on`, the `ollama` service and the `OLLAMA_*` lines.
 
 ## Configuration
 
